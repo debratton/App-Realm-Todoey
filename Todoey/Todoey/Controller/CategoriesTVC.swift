@@ -7,30 +7,42 @@
 //
 
 import UIKit
-import CoreData
+import RealmSwift
+import SwipeCellKit
 
 class CategoriesTVC: UITableViewController {
 
-    var categoriesArray = [Category]()
-    let context = (UIApplication.shared.delegate as! AppDelegate).persistentContainer.viewContext
+    let realm = try! Realm()
+    var categories: Results<Category>?
     
     override func viewDidLoad() {
         super.viewDidLoad()
         
-        loadItems()
+        loadCategories()
+        
+        tableView.rowHeight = 80.0
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-
-        return categoriesArray.count
+        if let count = categories {
+            return count.count
+        } else {
+            return 1
+        }
     }
 
     
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "CategoryCell", for: indexPath)
-
-        cell.textLabel?.text = categoriesArray[indexPath.row].name
-
+        //let cell = tableView.dequeueReusableCell(withIdentifier: "CategoryCell", for: indexPath)
+        //Changed for SwipeCellKit
+        let cell = tableView.dequeueReusableCell(withIdentifier: "CategoryCell", for: indexPath) as! SwipeTableViewCell
+        if let index = categories {
+            cell.textLabel?.text = index[indexPath.row].name
+        } else {
+            cell.textLabel?.text = "No Categories Added"
+        }
+        //Added for SwipeCellKit
+        cell.delegate = self
         return cell
     }
     
@@ -38,36 +50,49 @@ class CategoriesTVC: UITableViewController {
         performSegue(withIdentifier: "goToItems", sender: self)
     }
     
-    override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
-        if editingStyle == .delete {
-            let itemToDelete = categoriesArray[indexPath.row]
-            context.delete(itemToDelete)
-            saveItems()
-        }
-    }
+//    override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
+//        if editingStyle == .delete {
+//            if let deleteCategory = categories {
+//                let itemToDelete = deleteCategory[indexPath.row]
+//                delete(category: itemToDelete)
+//            }
+//        }
+//    }
     
     override func prepare(for segue: UIStoryboardSegue, sender: Any?) {
         let destinationVC = segue.destination as! ItemsTVC
         if let indexPath = tableView.indexPathForSelectedRow {
-            destinationVC.selectedCategory = categoriesArray[indexPath.row]
+            if let selectedIndex = categories {
+                destinationVC.selectedCategory = selectedIndex[indexPath.row]
+            }
         }
     }
     
-    func saveItems() {
+    func save(category: Category) {
         do {
-            try context.save()
+            try realm.write {
+                realm.add(category)
+            }
         } catch {
-            print("Error Saving Context: \(error.localizedDescription)")
+            print("Error Saving Category: \(error.localizedDescription)")
         }
-        loadItems()
+        loadCategories()
     }
     
-    func loadItems(request: NSFetchRequest<Category> = Category.fetchRequest()) {
+    func delete(category: Category) {
         do {
-            categoriesArray = try context.fetch(request)
+            try realm.write {
+                realm.delete(category)
+            }
         } catch {
-            print("Error Fetching Data: \(error.localizedDescription)")
+            print("Error Deleting Category: \(error.localizedDescription)")
         }
+        // IT APPEARS TO CRASH WITH SWIPECELL KIT IF YOU RELOAD TABLEVIEW
+        //loadCategories()
+    }
+    
+    func loadCategories() {
+        categories = realm.objects(Category.self)
         tableView.reloadData()
     }
     
@@ -85,17 +110,14 @@ class CategoriesTVC: UITableViewController {
         let alert = UIAlertController(title: "Add New Category", message: "", preferredStyle: .alert)
         let action = UIAlertAction(title: "Add", style: .default) { (action) in
             if textField.text != "" {
-                let newCategory = Category(context: self.context)
-                if let newItem = textField.text {
-                    newCategory.name = newItem
-                    self.categoriesArray.append(newCategory)
-                    self.saveItems()
+                let newCategory = Category()
+                if let newCategoryItem = textField.text {
+                    newCategory.name = newCategoryItem
+                    self.save(category: newCategory)
                 }
             } else {
                 self.presentAlert(alert: "You cannot add a blank category!")
             }
-            
-            
         }
         alert.addAction(action)
         alert.addTextField { (alertTextField) in
@@ -106,29 +128,52 @@ class CategoriesTVC: UITableViewController {
     }
 }
 
-extension CategoriesTVC: UISearchBarDelegate {
+//MARK: - Search and Swipe Cell
+extension CategoriesTVC: UISearchBarDelegate, SwipeTableViewCellDelegate {
     func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
-        let request: NSFetchRequest<Category> = Category.fetchRequest()
         if let searchText = searchBar.text {
-            request.predicate = NSPredicate(format: "name CONTAINS %@", searchText)
-            request.sortDescriptors  = [NSSortDescriptor(key: "name", ascending: true)]
-            loadItems(request: request)
+            if let sortedCategories = categories {
+                categories = sortedCategories.filter("name CONTAINS[cd] %@", searchText).sorted(byKeyPath: "name", ascending: true)
+                tableView.reloadData()
+            }
         }
     }
 
     func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
         if let searchString = searchBar.text {
             if searchString.count == 0 {
-                loadItems()
+                loadCategories()
                 DispatchQueue.main.async {
                     searchBar.resignFirstResponder()
                 }
             } else {
-                let request: NSFetchRequest<Category> = Category.fetchRequest()
-                request.predicate = NSPredicate(format: "name CONTAINS %@", searchText)
-                request.sortDescriptors  = [NSSortDescriptor(key: "name", ascending: true)]
-                loadItems(request: request)
+                if let sortedCategories = categories {
+                    categories = sortedCategories.filter("name CONTAINS[cd] %@", searchText).sorted(byKeyPath: "name", ascending: true)
+                    tableView.reloadData()
+                }
             }
         }
     }
+    
+    func tableView(_ tableView: UITableView, editActionsForRowAt indexPath: IndexPath, for orientation: SwipeActionsOrientation) -> [SwipeAction]? {
+        guard orientation == .right else { return nil }
+        let deleteAction = SwipeAction(style: .destructive, title: "Delete") { (action, indexPath) in
+            if let deleteCategory = self.categories {
+                let itemToDelete = deleteCategory[indexPath.row]
+                self.delete(category: itemToDelete)
+            }
+        }
+        deleteAction.image = UIImage(named: "delete-icon")
+        
+        return [deleteAction]
+    }
+    
+    func tableView(_ tableView: UITableView, editActionsOptionsForRowAt indexPath: IndexPath, for orientation: SwipeActionsOrientation) -> SwipeOptions {
+        var options = SwipeOptions()
+        options.expansionStyle = .destructive
+        options.transitionStyle = .border
+
+        return options
+    }
+    
 }

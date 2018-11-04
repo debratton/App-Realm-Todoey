@@ -7,70 +7,90 @@
 //
 
 import UIKit
-import CoreData
+import RealmSwift
+import SwipeCellKit
 
 class ItemsTVC: UITableViewController {
     
-    var itemsArray = [ToDo]()
+    let realm = try! Realm()
+    var items: Results<ToDo>?
     var selectedCategory: Category? {
         didSet {
             loadItems()
         }
     }
-    let context = (UIApplication.shared.delegate as! AppDelegate).persistentContainer.viewContext
     
     override func viewDidLoad() {
         super.viewDidLoad()
+        if let displayName = selectedCategory {
+            print(displayName.name)
+        }
+        tableView.rowHeight = 80.0
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        // #warning Incomplete implementation, return the number of rows
-        return itemsArray.count
+        if let count = items {
+            return count.count
+        } else {
+            return 1
+        }
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "ToDoCell", for: indexPath)
-        // HAVE TO CHANGE THIS ONCE YOU USE CLASS MODEL
-        //cell.textLabel?.text = itemsArray[indexPath.row]
-        cell.textLabel?.text = itemsArray[indexPath.row].title
-        
-        if itemsArray[indexPath.row].done == true {
-            cell.accessoryType = .checkmark
+        let cell = tableView.dequeueReusableCell(withIdentifier: "ToDoCell", for: indexPath) as! SwipeTableViewCell
+        if let index = items {
+            cell.textLabel?.text = index[indexPath.row].title
+            if index[indexPath.row].done == true {
+                cell.accessoryType = .checkmark
+            } else {
+                cell.accessoryType = .none
+            }
         } else {
-            cell.accessoryType = .none
-            
+            print("No Items Added")
+            cell.textLabel?.text = "No Items Added"
         }
+        //Added for SwipeCellKit
+        cell.delegate = self
 
         return cell
     }
     
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        // PRINT ARRAY NUMBER
-        print(indexPath.row)
-        // PRINT ARRAY VALUE
-        print(itemsArray[indexPath.row])
-        // IF STATEMENT TO SET CHECKMARK ON SELECTED ROW
-        
-        if itemsArray[indexPath.row].done == false {
-            itemsArray[indexPath.row].done = true
-        } else {
-            itemsArray[indexPath.row].done = false
+        if let selectedToDo = items {
+            if selectedToDo[indexPath.row].done == false {
+                do {
+                    try realm.write {
+                        selectedToDo[indexPath.row].done = true
+                    }
+                } catch {
+                    print("Error Saving Done: \(error.localizedDescription)")
+                }
+            } else {
+                do {
+                    try realm.write {
+                        selectedToDo[indexPath.row].done = false
+                    }
+                } catch {
+                    print("Error Saving Done: \(error.localizedDescription)")
+                }
+            }
         }
-        saveItems()
 
-        // MAKE ROW GO BACK TO WHITE AFTER CLICKED INSTEAD OF STAYING GREY
         tableView.deselectRow(at: indexPath, animated: true
             
         )
+        loadItems()
     }
     
-    override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
-        if editingStyle == .delete {
-            let itemToDelete = itemsArray[indexPath.row]
-            context.delete(itemToDelete)
-            saveItems()
-        }
-    }
+    // REPLACED WITH SWIPECELLKIT IN EXTENSION AT BOTTOM
+//    override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
+//        if editingStyle == .delete {
+//            if let deleteToDo = items {
+//                let itemToDelete = deleteToDo[indexPath.row]
+//                deleteToDos(itemToDelete: itemToDelete)
+//            }
+//        }
+//    }
     
     func presentAlert(alert:String) {
         let alertVC = UIAlertController(title: "Error", message: alert, preferredStyle: .alert)
@@ -82,27 +102,22 @@ class ItemsTVC: UITableViewController {
     }
    
     @IBAction func addToDoBtnPressed(_ sender: UIBarButtonItem) {
-        // HAVE TO DECLARE VARIABLE TO HOLD THE TEXT FIELD
         var textField = UITextField()
-        // BUILD ALERT
         let alert = UIAlertController(title: "Add New ToDoey", message: "", preferredStyle: .alert)
-        // ADD TITLE AND THIS IS WHERE YOU HAVE TO ADD PRINT AND APPEND TO ARRAY
         let action = UIAlertAction(title: "Add Item", style: .default) { (action) in
             if textField.text != "" {
-                let newToDo = ToDo(context: self.context)
-                if let newItem = textField.text {
-                    newToDo.title = newItem
+                let newToDo = ToDo()
+                if let newToDoTitle = textField.text {
+                    newToDo.title = newToDoTitle
                     newToDo.done = false
-                    newToDo.parentCategory = self.selectedCategory
-                    self.itemsArray.append(newToDo)
-                    self.saveItems()
+                    newToDo.dateCreated = Date()
+                    self.saveToDos(newItem: newToDo)
                 }
             } else {
                 self.presentAlert(alert: "You cannot add a blank item!")
             }
         }
         alert.addAction(action)
-        // ADD TEXT BOX
         alert.addTextField { (alertTextField) in
             alertTextField.placeholder = "Create New Item"
             textField = alertTextField
@@ -110,114 +125,86 @@ class ItemsTVC: UITableViewController {
         present(alert, animated: true, completion: nil)
     }
     
-    func saveItems() {
-        do {
-            try context.save()
-        } catch {
-            print("Error Saving Context: \(error.localizedDescription)")
+    func saveToDos(newItem: ToDo) {
+        if let currentCategory = selectedCategory {
+            do {
+                try realm.write {
+                    currentCategory.todos.append(newItem)
+                }
+            } catch {
+                print("Error Saving Data: \(error.localizedDescription)")
+            }
         }
-        //let request: NSFetchRequest<ToDo> = ToDo.fetchRequest()
         loadItems()
     }
     
-//    func loadItems() {
-//        let request: NSFetchRequest<ToDo> = ToDo.fetchRequest()
-//        do {
-//            itemsArray = try context.fetch(request)
-//        } catch {
-//            print("Error Fetching Data: \(error.localizedDescription)")
-//        }
-//        tableView.reloadData()
-//    }
-    // REFACTOR TO ALL CALLS FROM MULTIPLE PLACES
-    //func loadItems(request: NSFetchRequest<ToDo>)
-    // Updated so that if you don't pass a request it brings back all results
-//    func loadItems(request: NSFetchRequest<ToDo> = ToDo.fetchRequest()) {
-//        let request: NSFetchRequest<ToDo> = ToDo.fetchRequest()
-//
-//        //let predicate = NSPredicate(format: "parentCategory.name MATCHES %@", selectedCategory!.name!)
-//       // request.predicate = predicate
-//        do {
-//            itemsArray = try context.fetch(request)
-//        } catch {
-//            print("Error Fetching Data: \(error.localizedDescription)")
-//        }
-//        tableView.reloadData()
-//    }
-    
-    func loadItems(request: NSFetchRequest<ToDo> = ToDo.fetchRequest(), predicate: NSPredicate? = nil) {
-        let request: NSFetchRequest<ToDo> = ToDo.fetchRequest()
-        
-        let categoryPredicate = NSPredicate(format: "parentCategory.name MATCHES %@", selectedCategory!.name!)
-        
-//        let compoundPredicate = NSCompoundPredicate(andPredicateWithSubpredicates: [categoryPredicate, predicate])
-//
-//        request.predicate = compoundPredicate
-        if let additionalPredicate = predicate {
-            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [categoryPredicate, additionalPredicate])
-        } else {
-            request.predicate = categoryPredicate
-        }
-        
+    func deleteToDos(itemToDelete: ToDo) {
         do {
-            itemsArray = try context.fetch(request)
+            try realm.write {
+                realm.delete(itemToDelete)
+            }
         } catch {
-            print("Error Fetching Data: \(error.localizedDescription)")
+            print("Error Deleting ToDo: \(error.localizedDescription)")
         }
+        //loadItems()
+    }
+
+    func loadItems() {
+        //items = selectedCategory?.todos.sorted(byKeyPath: "title", ascending: true)
+        if let loadValues = selectedCategory {
+            items = loadValues.todos.sorted(byKeyPath: "title", ascending: true)
+        }
+        
         tableView.reloadData()
     }
 }
 
-//MARK: - Search Bar Methods
-// WE CAN EITHER DO THIS OR JUST ADD UISearchBarDelegate to top and
-// ADD FUNCTION INSIDE THE MainTVC Class
-extension ItemsTVC: UISearchBarDelegate {
-    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
-        let request: NSFetchRequest<ToDo> = ToDo.fetchRequest()
-        // Optional text
-        //print(searchBar.text)
-        if let searchText = searchBar.text {
-            // ORIGINAL BEFORE COMBINING
-            //let predicate = NSPredicate(format: "title CONTAINS %@", searchText)
-            //request.predicate = predicate
-            //let sortDescriptor = NSSortDescriptor(key: "title", ascending: true)
-            // request.sortDescriptors = [sortDescriptor]  HAVE TO PUT IN ARRAY
-            //request.predicate = NSPredicate(format: "title CONTAINS %@", searchText)
-            let predicate = NSPredicate(format: "title CONTAINS %@", searchText)
-            //HAVE TO ADD TO ARRAY AFTER REFACTORING
-            request.sortDescriptors  = [NSSortDescriptor(key: "title", ascending: true)]
 
-//            do {
-//                itemsArray = try context.fetch(request)
-//            } catch {
-//                print("Error Fetching Data: \(error.localizedDescription)")
-//            }
-            // REFACTOR ABOVE
-            //loadItems(request: request)
-            loadItems(request: request, predicate: predicate)
-            
+extension ItemsTVC: UISearchBarDelegate, SwipeTableViewCellDelegate {
+    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+        if let searchText = searchBar.text {
+            if let sortedItems = items {
+                items = sortedItems.filter("title CONTAINS[cd] %@", searchText).sorted(byKeyPath: "dateCreated", ascending: true)
+                tableView.reloadData()
+            }
         }
     }
-    // THIS FUNCTION WILL SEARCH FOR EACH KEY STROKE AND IF BLANK GO BACK TO ALL
+
     func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
         if let searchString = searchBar.text {
             if searchString.count == 0 {
                 loadItems()
-                // DISPATCH HAS TO BE INSIDE IF OR IT DISMISSES ON EACH KEY STROKE
                 DispatchQueue.main.async {
                     searchBar.resignFirstResponder()
                 }
             } else {
-//                let request: NSFetchRequest<ToDo> = ToDo.fetchRequest()
-//                request.predicate = NSPredicate(format: "title CONTAINS %@", searchText)
-//                request.sortDescriptors  = [NSSortDescriptor(key: "title", ascending: true)]
-//                loadItems(request: request)
-                let request: NSFetchRequest<ToDo> = ToDo.fetchRequest()
-                let predicate = NSPredicate(format: "title CONTAINS %@", searchText)
-                request.sortDescriptors  = [NSSortDescriptor(key: "title", ascending: true)]
-                loadItems(request: request, predicate: predicate)
-                
+                if let sortedItems = items {
+                    items = sortedItems.filter("title CONTAINS[cd] %@", searchText).sorted(byKeyPath: "dateCreated", ascending: true)
+                    tableView.reloadData()
+                }
             }
         }
     }
+    
+    func tableView(_ tableView: UITableView, editActionsForRowAt indexPath: IndexPath, for orientation: SwipeActionsOrientation) -> [SwipeAction]? {
+        guard orientation == .right else { return nil }
+        let deleteAction = SwipeAction(style: .destructive, title: "Delete") { (action, indexPath) in
+            if let deleteToDo = self.items {
+                let itemToDelete = deleteToDo[indexPath.row]
+                self.deleteToDos(itemToDelete: itemToDelete)
+            }
+        }
+        deleteAction.image = UIImage(named: "delete-icon")
+        
+        return [deleteAction]
+    }
+    
+    func tableView(_ tableView: UITableView, editActionsOptionsForRowAt indexPath: IndexPath, for orientation: SwipeActionsOrientation) -> SwipeOptions {
+        var options = SwipeOptions()
+        options.expansionStyle = .destructive
+        options.transitionStyle = .border
+        
+        return options
+    }
+    
 }
